@@ -1,0 +1,41 @@
+apiVersion: sriovfect2.amd.com/v1
+kind: SriovT2Card
+metadata:
+  labels:
+    app.kubernetes.io/name: sriovt2card
+    app.kubernetes.io/instance: sriovt2card-sample
+    app.kubernetes.io/part-of: amd-t2-january
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: amd-t2-january
+  name: sriovt2card
+  namespace: amd-t2
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: 7c-c2-55-85-ba-fe
+  acceleratorSelector:
+    pciAddress: 0000:01:00.0
+  physicalFunction:
+    pfDriver: "qdma-pf"
+    vfDriver: "vfio-pci"
+    vfAmount: 7
+  selector:
+    matchLabels:
+      app: dpdk
+  template:
+    spec:
+      imagePullSecrets:
+        - name: amdaecgt2-secret-amdt2
+      containers:
+        - name: redhat-non-root-container
+          # image: quay.io/amdaecgt2/amd-image-pod:latest
+          image: dhiraj30/amd-t2-sdfec-25-03-0-pod:v2
+          securityContext:
+            privileged: false
+          command: ["sleep", "infinity"]
+          resources:
+            limits:
+              memory: 10Gi
+              cpu: "4"
+            requests:
+              memory: 10Gi
+              cpu: "4"

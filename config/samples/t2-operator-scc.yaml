@@ -1,0 +1,45 @@
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: custom-scc
+allowHostDirVolumePlugin: true
+allowHostIPC: true
+allowHostNetwork: true
+allowHostPID: true
+allowHostPorts: true
+allowPrivilegeEscalation: true
+allowPrivilegedContainer: true
+allowedCapabilities:
+  - SYS_ADMIN
+  - IPC_LOCK
+  - NET_ADMIN
+  - SYS_RAWIO
+  - DAC_READ_SEARCH
+  - SYS_NICE
+  - SYS_RESOURCE
+  # - ALL
+fsGroup:
+  type: MustRunAs
+  ranges:
+  - min: 1001
+    max: 1001
+runAsUser:
+  type: MustRunAs
+  uid: 1001
+seLinuxContext:
+  type: RunAsAny
+seccompProfiles:
+  - '*'
+supplementalGroups:
+  type: RunAsAny
+volumes:
+  - 'hostPath'
+  - 'configMap'
+  - 'emptyDir'
+  - 'secret'
+  - 'projected'
+  - 'downwardAPI'
+  - 'hostDevice'
+users:
+  - system:serviceaccount:amd-t2:amd-t2-january-controller-manager
+  #- system:serviceaccount:{NameSpace}:t2-operator-controller-manager

@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- sriovfect2_v1_sriovt2card.yaml
+#+kubebuilder:scaffold:manifestskustomizesamples
