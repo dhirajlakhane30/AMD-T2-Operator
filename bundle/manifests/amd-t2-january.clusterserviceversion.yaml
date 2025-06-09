@@ -27,7 +27,7 @@ metadata:
             },
             "physicalFunction": {
               "pfDriver": "qdma-pf",
-              "vfAmount": 5,
+              "vfAmount": 2,
               "vfDriver": "vfio-pci"
             },
             "selector": {
@@ -43,7 +43,7 @@ metadata:
                       "sleep",
                       "infinity"
                     ],
-                    "image": "quay.io/amdaecgt2/amd-image-pod:latest",
+                    "image": "dhiraj30/amd-t2-sdfec-25-03-0-pod:v2",
                     "name": "redhat-non-root-container",
                     "resources": {
                       "limits": {
@@ -56,7 +56,7 @@ metadata:
                       }
                     },
                     "securityContext": {
-                      "privileged": true
+                      "privileged": false
                     }
                   }
                 ],
@@ -71,8 +71,8 @@ metadata:
         }
       ]
     capabilities: Basic Install
-    createdAt: "2025-02-07T10:30:15Z"
-    operators.operatorframework.io/builder: operator-sdk-v1.33.0
+    createdAt: "2025-06-03T06:51:54Z"
+    operators.operatorframework.io/builder: operator-sdk-v1.35.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
   name: amd-t2-january.v0.0.1
   namespace: placeholder
@@ -235,7 +235,7 @@ spec:
                 - --leader-elect
                 command:
                 - /manager
-                image: quay.io/amdaecgt2/amd-t2-january:v25.2.1
+                image: quay.io/amdt2operator/amd-t2-january:v25.5.5
                 livenessProbe:
                   httpGet:
                     path: /healthz

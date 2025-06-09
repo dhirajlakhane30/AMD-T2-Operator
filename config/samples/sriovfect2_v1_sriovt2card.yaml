@@ -17,7 +17,7 @@ spec:
   physicalFunction:
     pfDriver: "qdma-pf"
     vfDriver: "vfio-pci"
-    vfAmount: 7
+    vfAmount: 2
   selector:
     matchLabels:
       app: dpdk

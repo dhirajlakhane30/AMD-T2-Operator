@@ -100,12 +100,15 @@ func (r *SriovT2CardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	pciAddress = cr.Spec.AcceleratorSelector.PciAddress
 
+	nodeName := cr.Spec.NodeSelector["kubernetes.io/hostname"]
+	fmt.Println("nodename: " + nodeName)
+
 	fmt.Println("Basic Setup Started...")
 
-	err := createServiceAccounts(ctx, r.Client)
-	if err != nil {
-		setupLog.Error(err, "Failed to create ServiceAccount")
-	}
+	// err := createServiceAccounts(ctx, r.Client)
+	// if err != nil {
+	// 	setupLog.Error(err, "Failed to create ServiceAccount")
+	// }
 	// Create a DaemonSet to run the necessary commands on all nodes
 
 	setupDaemonSet := generateSetupDaemonSet(cr, r.Client, pciAddress)
@@ -141,6 +144,9 @@ func (r *SriovT2CardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// }
 
 	fmt.Println("Adding Resources To Node Level...")
+	fmt.Println("Please ensure you have added the qdma-pf.ko file")
+
+	time.Sleep(2 * time.Minute)
 
 	dsPluginNew, _ := applySriovDevicePluginConfigNew(ctx, r.Client)
 
@@ -154,6 +160,10 @@ func (r *SriovT2CardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		fmt.Println("Existing DaemonSet deleted.")
 	}
+
+	time.Sleep(10 * time.Second)
+
+	time.Sleep(1 * time.Minute)
 
 	if err := r.Client.Create(ctx, dsPluginNew); err != nil {
 		setupLog.Error(err, "Failed to apply SR-IOV device plugin configuration: DaemonSet creation failed")
@@ -180,6 +190,8 @@ func (r *SriovT2CardReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	setupLog.Info("Reconciliation process completed successfully...")
 	setupLog.Info("Start monitoring the devices and reapplying if needed...")
+
+	// go monitorAndReapply(ctx, r.Client, cr.Namespace, nodeName)
 	return ctrl.Result{}, nil
 }
 
@@ -237,13 +249,24 @@ func monitorAndReapply(ctx context.Context, kubeClient client.Client, namespace 
 
 		// if !pfAvailable || !vfAvailable {
 		if !vfAvailable {
-			setupLog.Info("SR-IOV device plugin configuration applied successfully...")
-			// err := applySriovDevicePluginConfigOld(ctx, kubeClient, namespace)
-			_, err := applySriovDevicePluginConfigNew(ctx, kubeClient)
-			setupLog.Info("SR-IOV device plugin configuration applied successfully...")
+			setupLog.Info("VFs not allocated to node. Reapplying SR-IOV device plugin configuration...")
+
+			fmt.Println("in the reapplying")
+			existingDs := &appsv1.DaemonSet{}
+			err := kubeClient.Get(ctx, client.ObjectKey{Name: "sriov-device-plugin", Namespace: "kube-system"}, existingDs)
+			if err == nil {
+				if err := kubeClient.Delete(ctx, existingDs); err != nil {
+					fmt.Printf("Failed to delete existing DaemonSet: %v\n", err)
+				} else {
+					fmt.Println("Existing DaemonSet deleted during reapply.")
+				}
+			}
+
+			time.Sleep(10 * time.Second)
+			_, err1 := applySriovDevicePluginConfigNew(ctx, kubeClient)
 			time.Sleep(2 * time.Second)
-			if err != nil {
-				fmt.Printf("Error applying SR-IOV device plugin configuration: %v\n", err)
+			if err1 != nil {
+				fmt.Printf("Error applying SR-IOV device plugin configuration: %v\n", err1)
 			} else {
 				fmt.Println("SR-IOV device plugin configuration applied successfully")
 			}
@@ -267,6 +290,8 @@ func isResourceAvailable(ctx context.Context, kubeClient client.Client, nodeName
 		return false, fmt.Errorf("resource %s not found on node %s", resourceName, nodeName)
 	}
 
+	fmt.Println("vfs values allocatable in resource avaialble func: ", allocatable.Value())
+
 	if allocatable.Value() > 0 {
 		return true, nil
 	}
@@ -278,6 +303,21 @@ func isResourceAvailable(ctx context.Context, kubeClient client.Client, nodeName
 func (r *SriovT2CardReconciler) cleanupResources(ctx context.Context, namespace string) error {
 	setupLog := log.FromContext(ctx)
 	fmt.Println("Cleaning up resources Started...")
+
+	daemonSetList_pre := &appsv1.DaemonSetList{}
+	if err := r.Client.List(ctx, daemonSetList_pre, client.InNamespace(namespace)); err != nil {
+		return err
+	}
+
+	for _, ds := range daemonSetList_pre.Items {
+		if err := r.Client.Delete(ctx, &ds); err != nil {
+			setupLog.Error(err, "Failed to delete DaemonSet", "DaemonSet", ds.Name)
+			return err
+		}
+		setupLog.Info("Deleting DaemonSet", "DaemonSet", ds.Name)
+	}
+
+	time.Sleep(32 * time.Second)
 
 	// Set VFs amount to 0
 	cr := &sriovfect2v1.SriovT2Card{}
@@ -364,8 +404,9 @@ func generateResetDaemonSet(cr *sriovfect2v1.SriovT2Card) *appsv1.DaemonSet {
 	// driverName := "vfio-pci"
 
 	// Construct reset command
-	resetCmd := fmt.Sprintf(`echo 0 > /sys/bus/pci/devices/%s/sriov_numvfs`,
-		pciAddress)
+	// resetCmd := fmt.Sprintf(`echo 0 > /sys/bus/pci/devices/%s/sriov_numvfs`,
+	// 	pciAddress)
+	resetCmd := fmt.Sprintf(`echo 0 > /sys/bus/pci/devices/%s/sriov_numvfs && echo "VFs after reset:" && cat /sys/bus/pci/devices/%s/sriov_numvfs && echo "Running lspci to verify Xilinx devices:" && lspci | grep -i xili | wc -l`, pciAddress, pciAddress)
 
 	fmt.Printf("Constructed resetCmd: %s\n", resetCmd)
 
@@ -412,8 +453,8 @@ func generateResetDaemonSet(cr *sriovfect2v1.SriovT2Card) *appsv1.DaemonSet {
 					},
 				},
 				Spec: corev1.PodSpec{
-					// ServiceAccountName: "amd-t2-january-controller-manager",
-					Containers: []corev1.Container{container},
+					ServiceAccountName: "amd-t2-january-controller-manager",
+					Containers:         []corev1.Container{container},
 					// ImagePullSecrets: []corev1.LocalObjectReference{
 					// 	{Name: "t2-operator-quay-secret"},
 					// },
@@ -552,58 +593,118 @@ func generateSetupDaemonSet(cr *sriovfect2v1.SriovT2Card, c client.Client, pfAdd
 	setupLog.Info("Driver name", "driverName", VfdriverName)
 	setupLog.Info("VF amount", "vfAmount", vfAmount)
 	setupLog.Info("PCI address", "pciAddress", pciAddress)
+	/*
+		dynamicCmd := fmt.Sprintf(`
+			   	        #!/bin/sh
+
+			   echo "Starting qdma-pf module watchdog..."
+
+			   # Wait until qdma-pf.ko becomes available
+			   while [ ! -f /home/nonroot/coreos-qdma/qdma-pf.ko ]; do
+			       echo "[WATCHDOG] qdma-pf.ko not found, retrying in 5s..."
+			       sleep 5
+			   done
+
+			   echo "[WATCHDOG] qdma-pf.ko found. Starting module management loop..."
+
+			   while true; do
+			       # Check if the module is loaded
+			       if lsmod | grep -q qdma; then
+			           echo "[WATCHDOG] qdma module already loaded."
+			       else
+			           echo "[WATCHDOG] qdma module not loaded. Trying to insert..."
+			           insmod /home/nonroot/coreos-qdma/qdma-pf.ko
+			           if [ $? -eq 0 ]; then
+			               echo "[WATCHDOG] qdma-pf.ko inserted successfully."
+			           else
+			               echo "[WATCHDOG] Failed to insert qdma-pf.ko"
+			           fi
+			       fi
+
+			       # Perform DPDK setup if module is loaded
+			       if lsmod | grep -q qdma; then
+			           echo "[WATCHDOG] Running DPDK setup steps..."
+			           modprobe %s
+			           cd /home/nonroot/dpdk-stable
+			           ./usertools/dpdk-devbind.py -b qdma-pf %s
+			           echo 1 | tee /sys/module/vfio_pci/parameters/enable_sriov
+			           echo %d | tee /sys/bus/pci/devices/%s/sriov_numvfs
+			           for vf_path in /sys/bus/pci/devices/%s/virtfn*; do
+			               if [ -e "$vf_path" ]; then
+			                   vf_pci_address=$(basename $(readlink $vf_path))
+			                   echo "[WATCHDOG] Binding VF: $vf_pci_address"
+			                   ./usertools/dpdk-devbind.py -b vfio-pci $vf_pci_address
+			               else
+			                   echo "[WATCHDOG] VF path $vf_path does not exist. Skipping."
+			               fi
+			           done
+			       fi
+
+			       echo "[WATCHDOG] Sleeping 10s before next check..."
+			       sleep 10
+			   done
+			   `, VfdriverName, pciAddress, vfAmount, pciAddress, pciAddress)
+	*/
 
 	dynamicCmd := fmt.Sprintf(`
-			#!/bin/sh
+						#!/bin/sh
 
-			echo "Starting qdma-pf module watchdog..."
+						echo "Starting qdma-pf module watchdog..."
 
-			while true; do
-			    echo "[WATCHDOG] Checking for qdma-pf.ko..."
+						while true; do
+						    echo "[WATCHDOG] Checking for qdma-pf.ko..."
 
-			    # Wait for the ko file if it doesn't exist
-			    while [ ! -f /home/nonroot/coreos-qdma/qdma-pf.ko ]; do
-			        echo "[WATCHDOG] qdma-pf.ko not found, retrying in 5s..."
-			        sleep 5
-			    done
+						    # Wait for the ko file if it doesn't exist
+						    while [ ! -f /home/nonroot/coreos-qdma/qdma-pf.ko ]; do
+						        echo "[WATCHDOG] qdma-pf.ko not found, retrying in 5s..."
+						        sleep 5
+						    done
 
-			    # Check if the module is loaded
-			    if lsmod | grep -q qdma; then
-			        echo "[WATCHDOG] qdma module already loaded."
-			    else
-			        echo "[WATCHDOG] qdma module not loaded. Trying to insert..."
-			        insmod /home/nonroot/coreos-qdma/qdma-pf.ko
-			        if [ $? -eq 0 ]; then
-			            echo "[WATCHDOG] qdma-pf.ko inserted successfully."
-			        else
-			            echo "[WATCHDOG] Failed to insert qdma-pf.ko"
-			        fi
-			    fi
+						    # Check if the module is loaded
+						    if lsmod | grep -q qdma; then
+						        echo "[WATCHDOG] qdma module already loaded."
+						    else
+						        echo "[WATCHDOG] qdma module not loaded. Trying to insert..."
+						        insmod /home/nonroot/coreos-qdma/qdma-pf.ko
+						        if [ $? -eq 0 ]; then
+						            echo "[WATCHDOG] qdma-pf.ko inserted successfully."
+						        else
+						            echo "[WATCHDOG] Failed to insert qdma-pf.ko"
+						        fi
+						    fi
 
-			    # Perform one-time binding and setup (only if module is now loaded)
-			    if lsmod | grep -q qdma; then
-			        echo "[WATCHDOG] Running DPDK setup steps..."
-			        modprobe %s
-			        cd /home/nonroot/dpdk-stable
-			        ./usertools/dpdk-devbind.py -b qdma-pf %s
-			        echo 1 | tee /sys/module/vfio_pci/parameters/enable_sriov
-			        echo %d | tee /sys/bus/pci/devices/%s/sriov_numvfs
-			        for vf_path in /sys/bus/pci/devices/%s/virtfn*; do
-			            if [ -e "$vf_path" ]; then
-			                vf_pci_address=$(basename $(readlink $vf_path))
-			                echo "[WATCHDOG] Binding VF: $vf_pci_address"
-			                ./usertools/dpdk-devbind.py -b vfio-pci $vf_pci_address
-			            else
-			                echo "[WATCHDOG] VF path $vf_path does not exist. Skipping."
-			            fi
-			        done
-			    fi
+						    # Perform one-time binding and setup (only if module is now loaded)
+						    if lsmod | grep -q qdma; then
+						        echo "[WATCHDOG] Running DPDK setup steps..."
+								xilinx_count=$(lspci | grep -i xili | wc -l)
+								total_vfs=$((xilinx_count - 1))
+                                echo "total_vfs_available = $total_vfs"
+								
+								if [ "$xilinx_count" -lt 2 ]; then
+								    echo "[WATCHDOG] Found $xilinx_count Xilinx devices. Running DPDK setup steps..."
+						            modprobe %s
+						            cd /home/nonroot/dpdk-stable
+						            ./usertools/dpdk-devbind.py -b qdma-pf %s
+						            echo 1 | tee /sys/module/vfio_pci/parameters/enable_sriov
+						            echo %d | tee /sys/bus/pci/devices/%s/sriov_numvfs
+						            for vf_path in /sys/bus/pci/devices/%s/virtfn*; do
+						                if [ -e "$vf_path" ]; then
+						                    vf_pci_address=$(basename $(readlink $vf_path))
+						                    echo "[WATCHDOG] Binding VF: $vf_pci_address"
+						                    ./usertools/dpdk-devbind.py -b vfio-pci $vf_pci_address
+						                else
+						                    echo "[WATCHDOG] VF path $vf_path does not exist. Skipping."
+						                fi
+						            done
+								else
+								    echo "[WATCHDOG]  Xilinx devices(VFs) found. Skipping VF setup."
+						        fi
+							fi
+						    echo "[WATCHDOG] Sleeping 10s before next check..."
+						    sleep 10
+						done
 
-			    echo "[WATCHDOG] Sleeping 10s before next check..."
-			    sleep 10
-			done
-
-			`, VfdriverName, pciAddress, vfAmount, pciAddress, pciAddress)
+						`, VfdriverName, pciAddress, vfAmount, pciAddress, pciAddress)
 
 	/*
 		dynamicCmd := fmt.Sprintf(`
@@ -818,12 +919,12 @@ func generateSetupDaemonSet(cr *sriovfect2v1.SriovT2Card, c client.Client, pfAdd
 func createServiceAccounts(ctx context.Context, c client.Client) error {
 	// Define the service accounts
 	serviceAccounts := []*corev1.ServiceAccount{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "sriov-device-plugin",
-				Namespace: "kube-system",
-			},
-		},
+		// {
+		// 	ObjectMeta: metav1.ObjectMeta{
+		// 		Name:      "sriov-device-plugin",
+		// 		Namespace: "kube-system",
+		// 	},
+		// },
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "amd-t2-january-controller-manager",
@@ -850,8 +951,8 @@ func createServiceAccounts(ctx context.Context, c client.Client) error {
 }
 func applySriovDevicePluginConfigNew(ctx context.Context, c client.Client) (*appsv1.DaemonSet, error) {
 	fmt.Println("Applying SR-IOV Device Plugin Configuration...")
-	namespace := "kube-system"
-	// namespace := "amd-t2"
+	// namespace := "kube-system"
+	namespace := "amd-t2"
 
 	// Create or update ConfigMap for SR-IOV device plugin
 	configMap := &corev1.ConfigMap{
@@ -930,15 +1031,15 @@ func applySriovDevicePluginConfigNew(ctx context.Context, c client.Client) (*app
 							Effect:   corev1.TaintEffectNoSchedule,
 						},
 					},
-					ServiceAccountName: "sriov-device-plugin",
-					// ServiceAccountName: "amd-t2-january-controller-manager",
+					// ServiceAccountName: "sriov-device-plugin",
+					ServiceAccountName: "amd-t2-january-controller-manager",
 					Containers: []corev1.Container{
 						{
 							Name: "kube-sriovdp",
 							// Image: "quay.io/amdaecgt2/amd-t2-device-plugin-ocp:v1.0.10",
-							Image: "quay.io/amdaecgt2/device-plugin:v1",
-							// Image:           "ghcr.io/k8snetworkplumbingwg/sriov-network-device-plugin:latest",
-							ImagePullPolicy: corev1.PullAlways,
+							// Image: "quay.io/amdaecgt2/device-plugin:v1",
+							Image:           "ghcr.io/k8snetworkplumbingwg/sriov-network-device-plugin:latest",
+							ImagePullPolicy: corev1.PullIfNotPresent,
 							Args: []string{
 								"--log-dir=sriovdp",
 								"--log-level=10",
