@@ -1038,7 +1038,8 @@ func applySriovDevicePluginConfigNew(ctx context.Context, c client.Client) (*app
 							Name: "kube-sriovdp",
 							// Image: "quay.io/amdaecgt2/amd-t2-device-plugin-ocp:v1.0.10",
 							// Image: "quay.io/amdaecgt2/device-plugin:v1",
-							Image:           "ghcr.io/k8snetworkplumbingwg/sriov-network-device-plugin:latest",
+							Image: "quay.io/amdt2operator/device-plugin:v1.0.3",
+							//Image:           "ghcr.io/k8snetworkplumbingwg/sriov-network-device-plugin:latest",
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Args: []string{
 								"--log-dir=sriovdp",
